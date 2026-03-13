@@ -2,11 +2,11 @@
 import PackageDescription
 
 let package = Package(
-    name: "DockLock",
+    name: "DockPin",
     platforms: [.macOS(.v13)],
     targets: [
         .executableTarget(
-            name: "docklock",
+            name: "dockpin",
             path: "Sources"
         )
     ]

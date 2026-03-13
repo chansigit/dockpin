@@ -127,16 +127,16 @@ func lockDock(displayNumber: Int, interval: UInt32 = 500_000) {
     let displays = getDisplays()
     guard let target = displays.first(where: { $0.index == displayNumber }) else {
         print("Error: Display \(displayNumber) not found.")
-        print("Use 'docklock list' to see available displays.")
+        print("Use 'dockpin list' to see available displays.")
         exit(1)
     }
 
-    print("Locking Dock to display \(target.index): \(Int(target.bounds.width))x\(Int(target.bounds.height))")
+    print("Pinning Dock to display \(target.index): \(Int(target.bounds.width))x\(Int(target.bounds.height))")
     print("Press Ctrl+C to stop.\n")
 
     // Handle Ctrl+C gracefully
     signal(SIGINT) { _ in
-        print("\nDock unlocked. Bye!")
+        print("\nDock unpinned. Bye!")
         exit(0)
     }
 
@@ -171,16 +171,16 @@ func timestamp() -> String {
 
 func printUsage() {
     print("""
-    DockLock — Pin your macOS Dock to one screen
+    DockPin — Pin your macOS Dock to one screen
 
     Usage:
-      docklock list                List available displays
-      docklock lock <display#>     Lock Dock to a display (runs until Ctrl+C)
-      docklock status              Show which display the Dock is currently on
+      dockpin list                List available displays
+      dockpin pin <display#>      Pin Dock to a display (runs until Ctrl+C)
+      dockpin status              Show which display the Dock is currently on
 
     Example:
-      docklock list
-      docklock lock 2
+      dockpin list
+      dockpin pin 2
     """)
 }
 
@@ -195,10 +195,10 @@ switch args[1] {
 case "list":
     listDisplays()
 
-case "lock":
+case "pin":
     guard args.count >= 3, let num = Int(args[2]) else {
-        print("Usage: docklock lock <display#>")
-        print("Run 'docklock list' to see available displays.")
+        print("Usage: dockpin pin <display#>")
+        print("Run 'dockpin list' to see available displays.")
         exit(1)
     }
     lockDock(displayNumber: num)
