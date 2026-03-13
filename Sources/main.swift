@@ -32,9 +32,25 @@ func getDisplays() -> [DisplayInfo] {
     }
 }
 
-// MARK: - Dock Detection
+// MARK: - Dock Orientation
 
-/// Find the Dock bar window and return which display it's on
+func getDockOrientation() -> String {
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: "/usr/bin/defaults")
+    task.arguments = ["read", "com.apple.dock", "orientation"]
+    let pipe = Pipe()
+    task.standardOutput = pipe
+    task.standardError = Pipe()
+    try? task.run()
+    task.waitUntilExit()
+    let data = pipe.fileHandleForReading.readDataToEndOfFile()
+    let output = String(data: data, encoding: .utf8)?
+        .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+    return output.isEmpty ? "bottom" : output
+}
+
+// MARK: - Dock Window Detection (for status command)
+
 func findDockDisplayID() -> CGDirectDisplayID? {
     guard let windowList = CGWindowListCopyWindowInfo(
         [.optionAll], kCGNullWindowID
@@ -61,14 +77,16 @@ func findDockDisplayID() -> CGDirectDisplayID? {
         let h = (boundsDict["Height"] as? NSNumber)?.doubleValue ?? 0
         let rect = CGRect(x: x, y: y, width: w, height: h)
 
-        // Skip desktop-sized windows (Dock also manages desktop icons)
-        // The actual dock bar is much smaller than the full screen
+        // Skip desktop-sized windows (Dock process also manages desktop icons)
         let displays = getDisplays()
+        var isDesktopWindow = false
         for display in displays {
             if rect.width >= display.bounds.width && rect.height >= display.bounds.height {
-                continue  // This is likely a desktop window, skip
+                isDesktopWindow = true
+                break
             }
         }
+        if isDesktopWindow { continue }
 
         var displayID: CGDirectDisplayID = 0
         var count: UInt32 = 0
@@ -81,32 +99,81 @@ func findDockDisplayID() -> CGDirectDisplayID? {
     return nil
 }
 
-// MARK: - Dock Relocation
+// MARK: - Event Tap (core pinning mechanism)
 
-func moveDockToDisplay(_ target: DisplayInfo) {
-    // Save current mouse position (NSEvent uses bottom-left origin)
-    let savedNS = NSEvent.mouseLocation
+// Instead of polling and trying to move the Dock back (unreliable),
+// we intercept mouse events and prevent the cursor from reaching
+// the Dock activation zone on non-target displays.
+// The Dock simply never activates on the wrong screen.
 
-    // Target: bottom-center of the target display (CoreGraphics uses top-left origin)
-    let targetPoint = CGPoint(
-        x: target.bounds.midX,
-        y: target.bounds.maxY - 1  // Bottom edge in CG coords
-    )
+var gTargetDisplayID: CGDirectDisplayID = 0
+var gDockEdge: String = "bottom"
+var gEventTap: CFMachPort?
 
-    // Warp cursor to target display bottom edge to trigger Dock movement
-    CGWarpMouseCursorPosition(targetPoint)
+/// How many pixels from the edge to block on non-target displays
+let kEdgeBlockZone: CGFloat = 6
 
-    // Brief pause to let macOS register the Dock move
-    usleep(150_000)  // 150ms
+func eventTapCallback(
+    proxy: CGEventTapProxy,
+    type: CGEventType,
+    event: CGEvent,
+    refcon: UnsafeMutableRawPointer?
+) -> Unmanaged<CGEvent>? {
+    // Re-enable tap if macOS disabled it (happens on processing timeout)
+    if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+        if let tap = gEventTap {
+            CGEvent.tapEnable(tap: tap, enable: true)
+        }
+        return Unmanaged.passUnretained(event)
+    }
 
-    // Convert saved NSEvent coords back to CG coords and restore
-    guard let mainScreen = NSScreen.screens.first else { return }
-    let mainHeight = mainScreen.frame.height
-    let restoredPoint = CGPoint(x: savedNS.x, y: mainHeight - savedNS.y)
-    CGWarpMouseCursorPosition(restoredPoint)
+    let point = event.location
 
-    // Re-associate mouse with cursor movement
-    CGAssociateMouseAndMouseCursorPosition(1)
+    // Which display is the mouse on?
+    var displayID: CGDirectDisplayID = 0
+    var count: UInt32 = 0
+    let pointRect = CGRect(x: point.x, y: point.y, width: 1, height: 1)
+    CGGetDisplaysWithRect(pointRect, 1, &displayID, &count)
+
+    // If on the target display (or can't determine), pass through unchanged
+    guard count > 0, displayID != gTargetDisplayID else {
+        return Unmanaged.passUnretained(event)
+    }
+
+    // Mouse is on a non-target display — clamp it away from the dock edge
+    let db = CGDisplayBounds(displayID)
+    var clamped = point
+    var needsClamp = false
+
+    switch gDockEdge {
+    case "bottom":
+        if point.y >= db.maxY - kEdgeBlockZone {
+            clamped.y = db.maxY - kEdgeBlockZone - 1
+            needsClamp = true
+        }
+    case "left":
+        if point.x <= db.minX + kEdgeBlockZone {
+            clamped.x = db.minX + kEdgeBlockZone + 1
+            needsClamp = true
+        }
+    case "right":
+        if point.x >= db.maxX - kEdgeBlockZone {
+            clamped.x = db.maxX - kEdgeBlockZone - 1
+            needsClamp = true
+        }
+    default:
+        // Default to bottom
+        if point.y >= db.maxY - kEdgeBlockZone {
+            clamped.y = db.maxY - kEdgeBlockZone - 1
+            needsClamp = true
+        }
+    }
+
+    if needsClamp {
+        event.location = clamped
+    }
+
+    return Unmanaged.passUnretained(event)
 }
 
 // MARK: - Commands
@@ -123,7 +190,20 @@ func listDisplays() {
     }
 }
 
-func lockDock(displayNumber: Int, interval: UInt32 = 500_000) {
+func showStatus() {
+    let displays = getDisplays()
+    if let dockDisplay = findDockDisplayID(),
+       let info = displays.first(where: { $0.id == dockDisplay }) {
+        print("Dock is on display \(info.description)")
+    } else {
+        print("Could not determine Dock's current display.")
+        print("Grant Screen Recording permission to your terminal app:")
+        print("  System Settings > Privacy & Security > Screen Recording")
+    }
+    print("Dock position: \(getDockOrientation())")
+}
+
+func pinDock(displayNumber: Int) {
     let displays = getDisplays()
     guard let target = displays.first(where: { $0.index == displayNumber }) else {
         print("Error: Display \(displayNumber) not found.")
@@ -131,40 +211,52 @@ func lockDock(displayNumber: Int, interval: UInt32 = 500_000) {
         exit(1)
     }
 
+    gTargetDisplayID = target.id
+    gDockEdge = getDockOrientation()
+
     print("Pinning Dock to display \(target.index): \(Int(target.bounds.width))x\(Int(target.bounds.height))")
+    print("Dock position: \(gDockEdge)")
+    print("Blocking dock activation on all other displays.")
     print("Press Ctrl+C to stop.\n")
 
-    // Handle Ctrl+C gracefully
+    // Create event tap to intercept mouse movements
+    let eventMask: CGEventMask =
+        (1 << CGEventType.mouseMoved.rawValue)
+        | (1 << CGEventType.leftMouseDragged.rawValue)
+        | (1 << CGEventType.rightMouseDragged.rawValue)
+
+    guard let tap = CGEvent.tapCreate(
+        tap: .cghidEventTap,
+        place: .headInsertEventTap,
+        options: .defaultTap,
+        eventsOfInterest: eventMask,
+        callback: eventTapCallback,
+        userInfo: nil
+    ) else {
+        print("Error: Failed to create event tap.")
+        print("")
+        print("Grant Accessibility permission to your terminal app:")
+        print("  System Settings > Privacy & Security > Accessibility")
+        print("")
+        print("Then restart your terminal and try again.")
+        exit(1)
+    }
+
+    gEventTap = tap
+
+    let runLoopSource = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+    CFRunLoopAddSource(CFRunLoopGetCurrent(), runLoopSource, .commonModes)
+    CGEvent.tapEnable(tap: tap, enable: true)
+
     signal(SIGINT) { _ in
         print("\nDock unpinned. Bye!")
         exit(0)
     }
 
-    // Initial move
-    if let currentDisplay = findDockDisplayID(), currentDisplay != target.id {
-        print("Moving Dock to target display...")
-        moveDockToDisplay(target)
-    }
+    print("Running... (mouse cannot trigger Dock on other displays)")
 
-    // Polling loop
-    while true {
-        usleep(interval)
-
-        guard let currentDisplay = findDockDisplayID() else {
-            continue
-        }
-
-        if currentDisplay != target.id {
-            print("[\(timestamp())] Dock drifted — moving back to display \(target.index)")
-            moveDockToDisplay(target)
-        }
-    }
-}
-
-func timestamp() -> String {
-    let fmt = DateFormatter()
-    fmt.dateFormat = "HH:mm:ss"
-    return fmt.string(from: Date())
+    // Run the event loop — blocks here until Ctrl+C
+    CFRunLoopRun()
 }
 
 // MARK: - Main
@@ -176,11 +268,15 @@ func printUsage() {
     Usage:
       dockpin list                List available displays
       dockpin pin <display#>      Pin Dock to a display (runs until Ctrl+C)
-      dockpin status              Show which display the Dock is currently on
+      dockpin status              Show current Dock display and position
 
     Example:
       dockpin list
       dockpin pin 2
+
+    Permissions required:
+      - Accessibility (for pin command — to intercept mouse events)
+      - Screen Recording (for status command — to read window info)
     """)
 }
 
@@ -201,17 +297,10 @@ case "pin":
         print("Run 'dockpin list' to see available displays.")
         exit(1)
     }
-    lockDock(displayNumber: num)
+    pinDock(displayNumber: num)
 
 case "status":
-    let displays = getDisplays()
-    if let dockDisplay = findDockDisplayID(),
-       let info = displays.first(where: { $0.id == dockDisplay }) {
-        print("Dock is on display \(info.description)")
-    } else {
-        print("Could not determine Dock's current display.")
-        print("Make sure you have screen recording permission enabled for Terminal.")
-    }
+    showStatus()
 
 case "-h", "--help", "help":
     printUsage()
