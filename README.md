@@ -1,6 +1,12 @@
-# DockPin
+<p align="center">
+  <img src="assets/logo.svg" width="128" height="128" alt="DockPin Logo">
+</p>
 
-Pin your macOS Dock to a single display — no more Dock jumping between screens.
+<h1 align="center">DockPin</h1>
+
+<p align="center">
+  Pin your macOS Dock to a single display — no more Dock jumping between screens.
+</p>
 
 ---
 
