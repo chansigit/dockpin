@@ -176,6 +176,116 @@ func eventTapCallback(
     return Unmanaged.passUnretained(event)
 }
 
+// MARK: - Daemon
+
+let pidFilePath = NSHomeDirectory() + "/.dockpin.pid"
+let logFilePath = NSHomeDirectory() + "/.dockpin.log"
+
+func savePID(_ pid: Int32) {
+    try? "\(pid)".write(toFile: pidFilePath, atomically: true, encoding: .utf8)
+}
+
+func readPID() -> Int32? {
+    guard let content = try? String(contentsOfFile: pidFilePath, encoding: .utf8),
+          let pid = Int32(content.trimmingCharacters(in: .whitespacesAndNewlines)) else {
+        return nil
+    }
+    return pid
+}
+
+func isProcessRunning(_ pid: Int32) -> Bool {
+    kill(pid, 0) == 0
+}
+
+func removePIDFile() {
+    try? FileManager.default.removeItem(atPath: pidFilePath)
+}
+
+func daemonStatus() -> (running: Bool, pid: Int32?) {
+    guard let pid = readPID(), isProcessRunning(pid) else {
+        return (false, nil)
+    }
+    return (true, pid)
+}
+
+func startDaemon(displayNumber: Int) {
+    let (running, existingPID) = daemonStatus()
+    if running, let pid = existingPID {
+        print("DockPin is already running (PID \(pid)).")
+        print("Use 'dockpin stop' first, or 'dockpin restart \(displayNumber)'.")
+        exit(1)
+    }
+
+    // Validate display before spawning
+    let displays = getDisplays()
+    guard displays.first(where: { $0.index == displayNumber }) != nil else {
+        print("Error: Display \(displayNumber) not found.")
+        print("Use 'dockpin list' to see available displays.")
+        exit(1)
+    }
+
+    // Re-launch self with --daemon flag as a background process
+    let selfPath = CommandLine.arguments[0]
+    let task = Process()
+    task.executableURL = URL(fileURLWithPath: selfPath)
+    task.arguments = ["--daemon", String(displayNumber)]
+
+    // Redirect output to log file
+    FileManager.default.createFile(atPath: logFilePath, contents: nil)
+    let logHandle = FileHandle(forWritingAtPath: logFilePath)!
+    logHandle.seekToEndOfFile()
+    task.standardOutput = logHandle
+    task.standardError = logHandle
+
+    do {
+        try task.run()
+    } catch {
+        print("Error: Failed to start daemon: \(error)")
+        exit(1)
+    }
+
+    let pid = task.processIdentifier
+    savePID(pid)
+
+    print("DockPin started in background (PID \(pid)).")
+    print("Dock pinned to display \(displayNumber).")
+    print("Log: \(logFilePath)")
+    print("Use 'dockpin stop' to stop.")
+}
+
+func stopDaemon() {
+    let (running, pid) = daemonStatus()
+    guard running, let pid = pid else {
+        print("DockPin is not running.")
+        removePIDFile()
+        return
+    }
+
+    kill(pid, SIGTERM)
+
+    // Wait briefly for process to exit
+    for _ in 0..<10 {
+        if !isProcessRunning(pid) { break }
+        usleep(100_000) // 100ms
+    }
+
+    if isProcessRunning(pid) {
+        kill(pid, SIGKILL)
+        usleep(200_000)
+    }
+
+    removePIDFile()
+    print("DockPin stopped (PID \(pid)).")
+}
+
+func restartDaemon(displayNumber: Int) {
+    let (running, _) = daemonStatus()
+    if running {
+        stopDaemon()
+    }
+    startDaemon(displayNumber: displayNumber)
+}
+
 // MARK: - Commands
 
 func listDisplays() {
@@ -201,6 +311,13 @@ func showStatus() {
         print("  System Settings > Privacy & Security > Screen Recording")
     }
     print("Dock position: \(getDockOrientation())")
+
+    let (running, pid) = daemonStatus()
+    if running, let pid = pid {
+        print("DockPin daemon: running (PID \(pid))")
+    } else {
+        print("DockPin daemon: not running")
+    }
 }
 
 func pinDock(displayNumber: Int) {
@@ -252,6 +369,10 @@ func pinDock(displayNumber: Int) {
         print("\nDock unpinned. Bye!")
         exit(0)
     }
+    signal(SIGTERM) { _ in
+        print("\nDock unpinned (terminated).")
+        exit(0)
+    }
 
     print("Running... (mouse cannot trigger Dock on other displays)")
 
@@ -267,16 +388,21 @@ func printUsage() {
 
     Usage:
       dockpin list                List available displays
-      dockpin pin <display#>      Pin Dock to a display (runs until Ctrl+C)
-      dockpin status              Show current Dock display and position
+      dockpin status              Show Dock position and daemon status
+      dockpin pin <display#>      Pin Dock (foreground, Ctrl+C to stop)
+      dockpin start <display#>    Pin Dock (background daemon)
+      dockpin stop                Stop the background daemon
+      dockpin restart <display#>  Restart the background daemon
 
     Example:
       dockpin list
-      dockpin pin 2
+      dockpin start 2
+      dockpin status
+      dockpin stop
 
     Permissions required:
-      - Accessibility (for pin command — to intercept mouse events)
-      - Screen Recording (for status command — to read window info)
+      - Accessibility (for pin/start — to intercept mouse events)
+      - Screen Recording (for status — to read window info)
     """)
 }
 
@@ -297,6 +423,30 @@ case "pin":
         print("Run 'dockpin list' to see available displays.")
         exit(1)
     }
+    pinDock(displayNumber: num)
+
+case "start":
+    guard args.count >= 3, let num = Int(args[2]) else {
+        print("Usage: dockpin start <display#>")
+        print("Run 'dockpin list' to see available displays.")
+        exit(1)
+    }
+    startDaemon(displayNumber: num)
+
+case "stop":
+    stopDaemon()
+
+case "restart":
+    guard args.count >= 3, let num = Int(args[2]) else {
+        print("Usage: dockpin restart <display#>")
+        print("Run 'dockpin list' to see available displays.")
+        exit(1)
+    }
+    restartDaemon(displayNumber: num)
+
+case "--daemon":
+    // Internal: used by 'start' to run in background
+    guard args.count >= 3, let num = Int(args[2]) else { exit(1) }
     pinDock(displayNumber: num)
 
 case "status":
