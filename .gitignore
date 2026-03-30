@@ -1,2 +1,3 @@
-docklock
 dockpin
+.build/
+.swiftpm/
