@@ -77,28 +77,40 @@ Dock is on display 1: 1512x982 (main) [ID: 1]
 Dock position: bottom
 ```
 
-#### 3. Pin the Dock to a display
+#### 3. Pin the Dock (foreground)
 
 ```bash
 ./dockpin pin 2
 ```
 
-This pins the Dock to display 2. The tool blocks the Dock from activating on any other display by intercepting mouse events near the screen edge.
+This pins the Dock to display 2 in the foreground. Press **Ctrl+C** to stop.
 
-Output example:
+#### 4. Pin the Dock (background daemon)
 
-```
-Pinning Dock to display 2: 2560x1440
-Dock position: bottom
-Blocking dock activation on all other displays.
-Press Ctrl+C to stop.
-
-Running... (mouse cannot trigger Dock on other displays)
+```bash
+./dockpin start 2
 ```
 
-#### 4. Stop pinning
+Starts DockPin as a background daemon. Output:
 
-Press **Ctrl+C** in the terminal to stop DockPin. The Dock will resume normal behavior.
+```
+DockPin started in background (PID 12345).
+Dock pinned to display 2.
+Log: ~/.dockpin.log
+Use 'dockpin stop' to stop.
+```
+
+#### 5. Stop the daemon
+
+```bash
+./dockpin stop
+```
+
+#### 6. Restart with a different display
+
+```bash
+./dockpin restart 1
+```
 
 ### Optional: Install to PATH
 
@@ -112,19 +124,7 @@ Then use it simply as:
 
 ```bash
 dockpin list
-dockpin pin 2
-```
-
-### Optional: Run in the background
-
-```bash
-nohup ./dockpin pin 2 > /tmp/dockpin.log 2>&1 &
-```
-
-To stop it later:
-
-```bash
-pkill dockpin
+dockpin start 2
 ```
 
 ### Troubleshooting
@@ -198,28 +198,40 @@ Dock is on display 1: 1512x982 (main) [ID: 1]
 Dock position: bottom
 ```
 
-#### 3. 将 Dock 固定到指定显示器
+#### 3. 固定 Dock（前台运行）
 
 ```bash
 ./dockpin pin 2
 ```
 
-这会将 Dock 固定到显示器 2。程序通过拦截鼠标事件，阻止 Dock 在其他屏幕上被激活。
+将 Dock 固定到显示器 2（前台运行），按 **Ctrl+C** 停止。
 
-输出示例：
+#### 4. 固定 Dock（后台守护进程）
 
-```
-Pinning Dock to display 2: 2560x1440
-Dock position: bottom
-Blocking dock activation on all other displays.
-Press Ctrl+C to stop.
-
-Running... (mouse cannot trigger Dock on other displays)
+```bash
+./dockpin start 2
 ```
 
-#### 4. 停止固定
+以后台守护进程方式启动 DockPin。输出示例：
 
-在终端中按 **Ctrl+C** 即可停止 DockPin。Dock 将恢复正常行为。
+```
+DockPin started in background (PID 12345).
+Dock pinned to display 2.
+Log: ~/.dockpin.log
+Use 'dockpin stop' to stop.
+```
+
+#### 5. 停止守护进程
+
+```bash
+./dockpin stop
+```
+
+#### 6. 重启并切换显示器
+
+```bash
+./dockpin restart 1
+```
 
 ### 可选：安装到系统路径
 
@@ -233,19 +245,7 @@ sudo cp ./dockpin /usr/local/bin/
 
 ```bash
 dockpin list
-dockpin pin 2
-```
-
-### 可选：后台运行
-
-```bash
-nohup ./dockpin pin 2 > /tmp/dockpin.log 2>&1 &
-```
-
-停止后台进程：
-
-```bash
-pkill dockpin
+dockpin start 2
 ```
 
 ### 常见问题
