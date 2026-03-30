@@ -75,6 +75,7 @@ Output example:
 ```
 Dock is on display 1: 1512x982 (main) [ID: 1]
 Dock position: bottom
+DockPin daemon: not running
 ```
 
 #### 3. Pin the Dock (foreground)
@@ -196,6 +197,7 @@ Available displays:
 ```
 Dock is on display 1: 1512x982 (main) [ID: 1]
 Dock position: bottom
+DockPin daemon: not running
 ```
 
 #### 3. 固定 Dock（前台运行）
@@ -256,3 +258,27 @@ dockpin start 2
 | 提示 `Could not determine Dock's current display` | 在系统设置中为你的终端应用开启「屏幕录制」权限：系统设置 > 隐私与安全性 > 屏幕录制。授权后重启终端。 |
 | 显示器编号变了 | 重新连接显示器后运行 `dockpin list` 查看最新编号。插拔显示器可能导致编号变化。 |
 | Dock 在左侧或右侧 | DockPin 会自动检测 Dock 的方向（底部/左侧/右侧），并拦截对应的屏幕边缘。 |
+
+---
+
+## Changelog
+
+### v1.2.0
+
+- Added daemon mode: `start`, `stop`, `restart` commands for background operation
+- `status` command now shows daemon running state and PID
+- Daemon uses PID file (`~/.dockpin.pid`) and log file (`~/.dockpin.log`)
+- Cleaned up project: removed legacy `docklock` references, updated `.gitignore`
+
+### v1.1.0
+
+- Added SVG logo and updated README header
+- First release with pre-built binary
+
+### v1.0.0
+
+- Initial release
+- Pin macOS Dock to a specific display using CGEventTap
+- Commands: `list`, `pin`, `status`
+- Auto-detects Dock orientation (bottom/left/right)
+- Supports macOS 13 (Ventura) and later
